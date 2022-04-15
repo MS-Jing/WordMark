@@ -1,98 +1,82 @@
-package com.lj.wordmark;
+package com.lj.wordmark.mark;
 
 import com.lj.wordmark.utils.MultiValueMap;
 import com.lj.wordmark.utils.WordMarkUtils;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.Setter;
-import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.xwpf.usermodel.*;
 
-import java.io.*;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * @Author luojing
- * @Date 2022/4/13
- * word的模板替换工具
- * 替换段落文本，替换表格内容
+ * @Date 2022/4/15
  */
 @Slf4j
-public class WordMark {
-    //文档对象
-    private final XWPFDocument document;
-    //输入的word流
-    private final InputStream inputStream;
-    //输出流
-    private OutputStream outputStream = null;
-    //数据模型
+public class BaseWordMark extends AbstractWordMark {
+
+    /**
+     * 数据模型
+     */
     @Setter
     private Map<String, String> dataModel = null;
-    //表格数据模型
+
+    /**
+     * 表格数据模型
+     */
     @Setter
     private MultiValueMap<String, Map<String, String>> tableDataModel = null;
-    // 标记匹配
-    private static final Pattern MARK_COMPILE = Pattern.compile("\\$\\{(.*?)}");
-    // 表格标记行索引，默认第1行，从0开始
+    /**
+     * 表格标记行索引，默认第1行，从0开始
+     */
     @Setter
     private Integer markRowIndex = 1;
 
-    public WordMark(String wordFilePath) throws IOException {
+    /**
+     * 标记匹配
+     */
+    private static final Pattern MARK_COMPILE = Pattern.compile("\\$\\{(.*?)}");
+    /**
+     * 标记前缀
+     */
+    private static final String MARK_PREFIX = "${";
+    /**
+     * 标记后缀
+     */
+    private static final String MARK_SUFFIX = "}";
+
+    private static final String TABLE_DELIMITER = ":";
+
+    public BaseWordMark(String wordFilePath) throws IOException {
         this(new FileInputStream(wordFilePath));
     }
 
-    public WordMark(InputStream in) throws IOException {
-        document = new XWPFDocument(in);
-        this.inputStream = in;
+    public BaseWordMark(InputStream in) throws IOException {
+        super(in);
     }
 
-    public void outputFile(String filePath) throws FileNotFoundException {
-        setOutputStream(new FileOutputStream(filePath));
-    }
-
-    public void setOutputStream(OutputStream outputStream) {
-        this.outputStream = outputStream;
-    }
-
-    public void doWrite() throws IOException {
-        //校验 输出流是否为空
-        if (outputStream == null) {
-            throw new RuntimeException("请先指定输出位置！");
-        }
-        try {
-            //执行段落的模板替换
-            doReplaceParagraph();
-            //表格的生成
-            doReplaceTable();
-            //写出word
-            writeWord();
-        } finally {
-            // 执行流的关闭
-            close();
-        }
-    }
-
-    /**
-     * 段落文本替换
-     */
-    private void doReplaceParagraph() {
+    @Override
+    protected void doReplaceParagraph() {
         if (dataModel == null || dataModel.isEmpty()) {
             //如果没有数据模型则不用替换
+            log.warn("没有设置相关的数据模型！dataModel");
             return;
         }
         List<XWPFParagraph> paragraphs = document.getParagraphs();
         replaceParagraphMark(paragraphs, dataModel);
     }
 
-    /**
-     * 替换和生成表格
-     */
-    private void doReplaceTable() {
+    @Override
+    protected void doReplaceTable() {
         if (tableDataModel == null || tableDataModel.isEmpty()) {
             //如果没有表格数据模型则不用替换
+            log.warn("没有设置相关的数据模型！ tableDataModel");
             return;
         }
         // 获取文档中的所有表格
@@ -118,7 +102,8 @@ public class WordMark {
                     List<String> markList = resolverTextMark(markCell.getText());
                     if (!markList.isEmpty()) {
                         String firstMark = markList.get(0);
-                        currentTableName = firstMark.split("\\.")[0];
+                        //截取表格定界符来判断填充那张表
+                        currentTableName = firstMark.split(TABLE_DELIMITER)[0];
                         tableDataList = tableDataModel.get(currentTableName);
                         break;
                     }
@@ -129,9 +114,7 @@ public class WordMark {
             if (tableDataList == null || tableDataList.isEmpty()) {
                 return;
             }
-            if (markCells == null) {
-                throw new RuntimeException("标记行必须在第二行！");
-            }
+            log.debug("填充表:" + currentTableName);
             for (Map<String, String> tableData : tableDataList) {
                 //创建一个新的行
                 XWPFTableRow dataRow = table.createRow();
@@ -141,14 +124,13 @@ public class WordMark {
                     XWPFTableCell markCell = markCells.get(i);
                     XWPFTableCell dataCell = dataCells.get(i);
                     WordMarkUtils.copyCell(markCell, dataCell);
-                    replaceParagraphMark(dataCell.getParagraphs(), tableData, currentTableName + ".");
+                    replaceParagraphMark(dataCell.getParagraphs(), tableData, currentTableName + TABLE_DELIMITER);
                 }
             }
 
             //填充结束删除标记行
             table.removeRow(markRowIndex);
         }
-
     }
 
     /**
@@ -177,7 +159,9 @@ public class WordMark {
 
         //循环每个段落,获取所有标志位，解析标志位替换文本
         for (XWPFParagraph paragraph : paragraphs) {
+            log.debug("替换段落:" + paragraph.getText());
             Set<XWPFRun> markRuns = extractMarks(paragraph);
+            log.debug("提取出标记文本:" + markRuns);
             for (XWPFRun markRun : markRuns) {
                 List<String> textMarks = resolverTextMark(markRun.text());
                 if (textMarks.size() >= 1) {
@@ -186,8 +170,10 @@ public class WordMark {
                     for (String textMark : textMarks) {
                         textMark = textMark.replace(modelPrefix, "");
                         String data = model.getOrDefault(textMark, "");
-                        runContent = runContent.replace("${" + textMark + "}", data);
+                        //防止使用实体类的方式获取的数据本来就是null报空指针异常
+                        runContent = runContent.replace(MARK_PREFIX + textMark + MARK_SUFFIX, data != null ? data : "");
                     }
+                    log.debug("标记文本：{} 替换成：{}", markRun.text(), runContent);
                     markRun.setText(runContent, 0);
                 } else {
                     log.warn(("请确认你的标志位的语法是否正确:" + markRun.text()));
@@ -202,96 +188,38 @@ public class WordMark {
      * @param paragraph 段落
      * @return 提取后的标志位，一个段落可以有多个标志位
      */
-//    private List<XWPFRun> extractMarks(XWPFParagraph paragraph) {
-//        List<XWPFRun> markRuns = new ArrayList<>();
-//        //段落的所有文本
-//        List<XWPFRun> runs = paragraph.getRuns();
-//        //当匹配到开始标志位时存放标志位，直到处理到结束标志位
-//        Deque<XWPFRun> deque = new ArrayDeque<>();
-//        Iterator<XWPFRun> iterator = runs.iterator();
-//        //会从开始标志位拷贝到结束标志位，所以除了结束标志位都是不完整的标志位
-//        HashSet<XWPFRun> removeSet = new HashSet<>();
-//        while (iterator.hasNext()) {
-//            XWPFRun run = iterator.next();
-//            if (run.text().startsWith("$")) {
-//                deque.add(run);
-//                while (!run.text().endsWith("}")) {
-//                    run = iterator.next();
-//                    deque.add(run);
-//                }
-//                //开始组装完整的标记位
-//                if (deque.peekLast().text().endsWith("}")) {
-//                    Optional<XWPFRun> reduce = deque.stream().reduce((f, l) -> {
-//                        WordMarkUtils.copyRun(f, l, f.text() + l.text());
-//                        removeSet.add(f);
-//                        return l;
-//                    });
-//                    if (reduce.isPresent()) {
-//                        XWPFRun markRun = reduce.get();
-//                        markRuns.add(markRun);
-//                    }
-//                    // 在一个段落中一个标志位替换完毕一定要将队列清空
-//                    deque.clear();
-//                } else {
-//                    throw new RuntimeException("匹配替换发生错误！在 " + run.text() + " 附近。你必须以 `}` 结束但是以 " + deque.peekLast().text() + " 结束");
-//                }
-//            }
-//        }
-//        //删除当前段落不完整的run
-//        removeSet.forEach(e -> {
-//            int i = runs.indexOf(e);
-//            paragraph.removeRun(i);
-//        });
-//        return markRuns;
-//    }
-
-    /**
-     * //$在中间：判断${
-     * //是：判断是否有}没有就一直找}结束
-     * //否：清空队列下一个
-     * //$在结尾,需要判断下一个是否是{开头
-     * //是：判断是否有}没有就一直找}结束
-     * //否: 清空队列下一个
-     *
-     * @param paragraph
-     * @return
-     */
     private Set<XWPFRun> extractMarks(XWPFParagraph paragraph) {
         Set<XWPFRun> markRuns = new HashSet<>();
         List<XWPFRun> runs = paragraph.getRuns();
-        Set<XWPFRun> removeSet = new HashSet<>();
-        List<IndexRun> indexRuns = new ArrayList<>();
-        int index = 0;
-        for (XWPFRun run : runs) {
-            int length = run.text().length();
-            int lastIndex = index + length;
-            indexRuns.add(new IndexRun(index, lastIndex, run));
-            index = lastIndex;
-        }
+        List<IndexRun> indexRuns = prepareIndexRuns(runs);
+
         String paragraphText = paragraph.getText();
         int startIndex = 0, endIndex = 0;
         while (true) {
-            startIndex = WordMarkUtils.getSeparatorIndexOf(paragraphText, "${", startIndex);
+            startIndex = WordMarkUtils.getSeparatorIndexOf(paragraphText, MARK_PREFIX, startIndex);
             if (startIndex != -1) {
-                endIndex = WordMarkUtils.getSeparatorIndexOf(paragraphText, "}", startIndex + 1);
+                endIndex = WordMarkUtils.getSeparatorIndexOf(paragraphText, MARK_SUFFIX, startIndex + 1);
                 if (endIndex != -1) {
                     //绝对不可能没有
                     List<IndexRun> indexRunRange = findIndexRunRange(indexRuns, startIndex, endIndex);
                     IndexRun lastIndexRun = indexRunRange.get(indexRunRange.size() - 1);
-                    if (!lastIndexRun.removeAble) {
-                        //倒数第二个
-                        IndexRun penultIndexRun = indexRunRange.get(indexRunRange.size() - 2);
-                        //最后一个会自己调整，将}前面包括}的标志位内容返回
-                        // 由倒数第二个run进行添加
-                        String adjust = lastIndexRun.adjust();
-                        penultIndexRun.getRun().setText(adjust);
+                    if (lastIndexRun.adjustAble) {
+                        if (indexRunRange.size() > 1) {
+                            lastIndexRun.forwardToAdjust();
+                            //记得一定要把最后一个从indexRunRange删掉不然一会会从段落删除掉
+                            indexRunRange.remove(indexRunRange.size() - 1);
+                        } else {
+                            lastIndexRun.backToAdjust();
+                        }
+
                     }
                     Optional<IndexRun> reduce = indexRunRange.stream().reduce((f, l) -> {
-                        f.getRun().setText(l.getRun().text());
-//                        WordMarkUtils.copyRun(l.getRun(), f.getRun(), f.getRun().text() + l.getRun().text());
-                        removeSet.add(l.getRun());
+                        f.getRun().setText(f.getRun().text() + l.getRun().text(), 0);
+                        //将替换后的不完整的run置空，不然生成的文本会携带
+                        l.getRun().setText("",0);
                         return f;
                     });
+                    //将组合起来的标志位run添加到集合中
                     reduce.ifPresent(indexRun -> markRuns.add(indexRun.getRun()));
                     startIndex = endIndex + 1;
                 } else {
@@ -303,14 +231,38 @@ public class WordMark {
                 break;
             }
         }
-        //删除当前段落不完整的run
-        removeSet.forEach(e -> {
-            int i = runs.indexOf(e);
-            paragraph.removeRun(i);
-        });
         return markRuns;
     }
 
+    private List<IndexRun> prepareIndexRuns(List<XWPFRun> runs) {
+        List<IndexRun> indexRuns = new ArrayList<>();
+        int index = 0;
+        IndexRun lastIndexRun = null;
+        //组装索引run的列表
+        for (XWPFRun run : runs) {
+            int length = run.text().length();
+            int lastIndex = index + length;
+            IndexRun indexRun = new IndexRun(index, lastIndex, run, lastIndexRun);
+            indexRuns.add(indexRun);
+            index = lastIndex;
+            lastIndexRun = indexRun;
+        }
+        //组装索引run的next
+        for (int i = 0; i < indexRuns.size() - 1; i++) {
+            indexRuns.get(i).setNext(indexRuns.get(i + 1));
+        }
+
+        return indexRuns;
+    }
+
+    /**
+     * 从文本的索引列表找出在模板范围的文本索引
+     *
+     * @param indexRuns  索引列表
+     * @param startIndex 开始索引
+     * @param endIndex   结束索引
+     * @return 在模板范围的文本索引
+     */
     private List<IndexRun> findIndexRunRange(List<IndexRun> indexRuns, int startIndex, int endIndex) {
         List<IndexRun> indexRunRanges = new ArrayList<>();
         Iterator<IndexRun> iterator = indexRuns.iterator();
@@ -328,25 +280,83 @@ public class WordMark {
         return indexRunRanges;
     }
 
-    /**
-     * 真实写出word
-     *
-     * @throws IOException io流 异常
-     */
-    private void writeWord() throws IOException {
-        document.write(outputStream);
-    }
+    private static class IndexRun {
+        private int startIndex;
+        private int endIndex;
+        @Getter
+        private XWPFRun run;
+        private IndexRun last;
+        @Setter
+        private IndexRun next;
+        /**
+         * 当run中}后面还有值表示可以调整
+         */
+        @Getter
+        private boolean adjustAble = false;
 
-    /**
-     * 关闭流操作
-     * 其实document会自行帮我们关闭输入输出流
-     *
-     * @throws IOException io流 异常
-     */
-    private void close() throws IOException {
-        inputStream.close();
-        document.close();
-        outputStream.close();
+        private IndexRun(int startIndex, int endIndex, XWPFRun run, IndexRun last) {
+            this.startIndex = startIndex;
+            this.endIndex = endIndex;
+            this.run = run;
+            this.last = last;
+            //判断是否可以调整 }后面还有值表示不能删
+            if (run.text().contains(MARK_SUFFIX) && !run.text().endsWith(MARK_SUFFIX)) {
+                this.adjustAble = true;
+            }
+        }
+
+        /**
+         * 判断字符索引是否在当前run中
+         * 左包含右不包含
+         *
+         * @param index 字符索引
+         * @return 在其中返回true
+         */
+        private boolean thereof(int index) {
+            return startIndex <= index && index < endIndex;
+        }
+
+        /**
+         * 向前面调整，将}(包括})前面部分追加到上一个run
+         */
+        private void forwardToAdjust() {
+            if (adjustAble && last != null) {
+                String text = run.text();
+                int i = text.indexOf(MARK_SUFFIX);
+                String pre = text.substring(0, i + 1);
+                String next = text.substring(i + 1);
+                last.getRun().setText(last.getRun().text() + pre, 0);
+                run.setText(next, 0);
+                last.endIndex += pre.length();
+                this.startIndex += pre.length();
+            }
+        }
+
+        /**
+         * 向后调整 将}(包括})后面的部分依附到下一个run
+         */
+        private void backToAdjust() {
+            if (adjustAble && this.next != null) {
+                String text = run.text();
+                int i = text.indexOf(MARK_SUFFIX);
+                String pre = text.substring(0, i + 1);
+                String next = text.substring(i + 1);
+                this.next.getRun().setText(next + this.next.getRun().text(), 0);
+                run.setText(pre, 0);
+                this.endIndex -= next.length();
+                this.next.startIndex -= next.length();
+            }
+        }
+
+        @Override
+        public String toString() {
+            return "IndexRun{" +
+                    "startIndex=" + startIndex +
+                    ", endIndex=" + endIndex +
+                    ", run=" + run +
+                    ", adjustAble=" + adjustAble +
+                    '}';
+        }
     }
 
     /**
@@ -366,57 +376,5 @@ public class WordMark {
             markList.add(matcher.group(1));
         }
         return markList;
-    }
-
-    @ToString
-    private static class IndexRun {
-        private int startIndex;
-        private int endIndex;
-        @Getter
-        private XWPFRun run;
-        /**
-         * 可以删除不代表一定要删
-         * 当run中}后面还有值表示不能删
-         */
-        @Getter
-        private boolean removeAble = true;
-
-        private IndexRun(int startIndex, int endIndex, XWPFRun run) {
-            this.startIndex = startIndex;
-            this.endIndex = endIndex;
-            this.run = run;
-            //判断是否可以删除 }后面还有值表示不能删
-            if (run.text().contains("}") && !run.text().endsWith("}")) {
-                this.removeAble = false;
-            }
-        }
-
-        /**
-         * 判断字符索引是否在当前run中
-         * 左包含右不包含
-         *
-         * @param index 字符索引
-         * @return 在其中返回true
-         */
-        private boolean thereof(int index) {
-            return startIndex <= index && index < endIndex;
-        }
-
-        /**
-         * 调整，将当前run }后面的保留，前面的返回
-         *
-         * @return }前面的返回包括}
-         */
-        private String adjust() {
-            if (!removeAble) {
-                String text = run.text();
-                int i = text.indexOf("}");
-                String pre = text.substring(0, i + 1);
-                String next = text.substring(i + 1);
-                WordMarkUtils.copyRun(run, run, next);
-                return pre;
-            }
-            return "";
-        }
     }
 }
