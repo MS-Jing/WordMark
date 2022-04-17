@@ -1,6 +1,7 @@
 package com.lj.wordmark;
 
 import com.lj.wordmark.entity.DataModel;
+import com.lj.wordmark.entity.Phone;
 import com.lj.wordmark.entity.User;
 import com.lj.wordmark.mark.BaseWordMark;
 import com.lj.wordmark.mark.GeneralWordMark;
@@ -62,9 +63,9 @@ public class Main {
         wordMark.setDataModel(dataModel);
         //创建表格数据模型
         LinkedMultiValueMap<String, User> tableDataModel = new LinkedMultiValueMap<>();
-        tableDataModel.add("user", new User(1, "张三", 18, null));
-        tableDataModel.add("user", new User(2, "李四", 19, null));
-        tableDataModel.add("user", new User(3, "王五", 20, "羽毛球"));
+        tableDataModel.add("user", new User(1, "张三", 18, null, null));
+        tableDataModel.add("user", new User(2, "李四", 19, null, null));
+        tableDataModel.add("user", new User(3, "王五", 20, "羽毛球", new Phone("123", "小米")));
         wordMark.setObjectTableDataModel(tableDataModel);
 
         //导出word
