@@ -1,10 +1,12 @@
 package com.lj.wordmark.mark;
 
+import com.lj.wordmark.annotation.MarkField;
 import com.lj.wordmark.utils.LinkedMultiValueMap;
 import com.lj.wordmark.utils.MultiValueMap;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -48,17 +50,31 @@ public class GeneralWordMark<D, T> extends BaseWordMark {
         super.setTableDataModel(model);
     }
 
+    /**
+     * 获取对象的字段组成map
+     *
+     * @param dataModel 数据模型对象
+     * @return map
+     */
     private Map<String, String> getObjectDataModel(Object dataModel) {
         List<Class<?>> ownOrSuperClass = getOwnOrSuperClass(dataModel);
         Map<String, String> model = new HashMap<>();
         for (Class<?> aClass : ownOrSuperClass) {
+            //遍历属于该实体的所有字段
             Field[] fields = aClass.getDeclaredFields();
             for (Field field : fields) {
                 try {
+                    MarkField markField = field.getAnnotation(MarkField.class);
+                    String key = null;
+                    if (markField != null) {
+                        key = markField.value();
+                    } else {
+                        key = field.getName();
+                    }
                     field.setAccessible(true);
                     Object data = field.get(dataModel);
-                    model.put(field.getName(), data == null ? null : data.toString());
                     field.setAccessible(false);
+                    model.put(key, data == null ? null : data.toString());
                 } catch (IllegalAccessException e) {
                     e.printStackTrace();
                 }

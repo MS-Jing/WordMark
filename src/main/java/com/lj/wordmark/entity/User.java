@@ -1,5 +1,6 @@
 package com.lj.wordmark.entity;
 
+import com.lj.wordmark.annotation.MarkField;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
@@ -11,6 +12,7 @@ import lombok.Data;
 @AllArgsConstructor
 public class User {
     private Integer index;
+    @MarkField("姓名")
     private String name;
     private Integer age;
     private String hobby;
